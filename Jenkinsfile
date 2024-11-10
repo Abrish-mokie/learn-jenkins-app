@@ -1,79 +1,90 @@
-// pipeline {
-//     agent any
-
-//     stages {
-//         stage('w/o docker'){
-//             steps{
-//                 sh '''
-//                 echo "Withough docker"
-//                 ls -la
-//                 touch container-no.txt
-//                 ls -la
-//                 pwd
-//                 '''
-//             }
-//         }
-//         stage('w/ docker') {
-//             agent{
-//                 docker{
-//                     image 'node:18-alpine'
-//                     reuseNode true
-//                 }
-//             }
-//             steps {
-//                 sh '''
-//                 echo "With docker"
-//                 ls -la
-//                 touch container-yes.txt
-//                 ls -la
-//                 pwd
-//                 '''
-//             }
-//         }
-//     }
-// }
 pipeline {
     agent any
 
     stages {
-        stage('Build'){
-            agent{
-                docker{
+
+        stage('Build') {
+            agent {
+                docker {
                     image 'node:18-alpine'
                     reuseNode true
-                 }
+                }
             }
             steps {
-                 sh '''
-                 ls -la
-                 node --version
-                 npm --version
-                 npm ci
-                 npm run build
-                 ls -la
-              '''
-        }
-    }
-    stage('Test'){
-        agent{
-            docker{
-                image 'node:18-alpine'
-                reuseNode true
+                sh '''
+                    ls -la
+                    node --version
+                    npm --version
+                    npm ci
+                    npm run build
+                    ls -la
+                '''
             }
         }
-        steps{
-            sh 'echo "Test stage"'
-            sh '''
-            test -f build/index.html
-            npm test
-            ls -la
-            '''
+
+        stage('Tests') {
+            parallel {
+                stage('Unit tests') {
+                    agent {
+                        docker {
+                            image 'node:18-alpine'
+                            reuseNode true
+                        }
+                    }
+
+                    steps {
+                        sh '''
+                            #test -f build/index.html
+                            npm test
+                        '''
+                    }
+                    post {
+                        always {
+                            junit 'jest-results/junit.xml'
+                        }
+                    }
+                }
+
+                stage('E2E') {
+                    agent {
+                        docker {
+                            image 'mcr.microsoft.com/playwright:v1.39.0-jammy'
+                            reuseNode true
+                        }
+                    }
+
+                    steps {
+                        sh '''
+                            npm install serve
+                            node_modules/.bin/serve -s build &
+                            sleep 10
+                            npx playwright test  --reporter=html
+                        '''
+                    }
+
+                    post {
+                        always {
+                            publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'playwright-report', reportFiles: 'index.html', reportName: 'Playwright HTML Report', reportTitles: '', useWrapperFileDirectly: true])
+                        }
+                    }
+                }
+            }
         }
-    }
-}
-    post{
-        always {
-            junit 'test-results/junit.xml'
+
+        stage('Deploy') {
+            agent {
+                docker {
+                    image 'node:18-alpine'
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    npm install netlify-cli -g
+                    netlify  --version
+                    node_modules/.bin/netlify --version
+                '''
+            }
         }
     }
 }
